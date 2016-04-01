@@ -23,10 +23,13 @@ var config = {};
 
 var program = commander
 	.version(pack.version)
+    .args()
 	.option('-u, --username <username>', 'Github username')
 	.option('-p, --password <password>', 'Github password')
 	.option('-l, --label <label>', 'Github Pull-request label to filter')
+	.option('-i, --milestone <milestone>', 'Github Milestone to filter')
 	.option('-b, --build <version>', 'Version of the release')
+	.option('-f, --finalize <version>', 'Create a release tag ')
 	.option('-a, --auto-version <version>', 'Specify the minor version and the build will auto-increment the patch version based on the latest version generated')
 	.option('-r, --repository <repository>', 'Path to the repository', absolutePath, process.cwd())
 	.option('-s, --skip-merge-conflict', 'Skip merge conflicts and notify the user that the branch was skipped')
@@ -72,10 +75,14 @@ Promise.resolve(config)
 			label: {
 				description: 'Label (default: readyForMerge):',
 			},
+            milestone: {
+                description: 'Milestone '
+            }
 		}, program)
 		.then(function (inputs) {
 			config.label = inputs.label;
 			config.version = inputs.build;
+            config.milestone = inputs.milestone;
 			config.githubCredentials = {
 				username: inputs.username,
 				password: inputs.password,
@@ -492,6 +499,7 @@ function getPullRequestToMerge () {
 			repo: config.repository.name,
 			state: 'open',
 			labels: config.label || 'readyForMerge',
+            milestone: config.milestone
 		}, function(err, res) {
 			if (err) {
 				return r(err);
@@ -547,46 +555,47 @@ function branchExists (branch) {
 }
 
 function createRelease () {
-	return new Promise(function (resolve, reject) {
+    if(program.finalize) {
+        return new Promise(function (resolve, reject) {
 
-		/*
-		 * Connect to Github
-		 */
-		connectGithub();
+            /*
+             * Connect to Github
+             */
+            connectGithub();
 
 
+            /*
+             * Get the branch
+             */
+            var now = new Date();
 
-		/*
-		 * Get the branch
-		 */
-		var now = new Date();
+            config.bodyRelease = 'Content:\n' + config.pullRequests.map(function (pr) {
+                    return '- ' + pr.head.ref + ': ' + pr.title;
+                }).join('\n');
 
-		config.bodyRelease = 'Content:\n' + config.pullRequests.map(function (pr) {
-			return '- '+pr.head.ref+': '+pr.title;
-		}).join('\n');
+            if (config.failedBranches.length) {
+                config.bodyRelease += '\n\n\nMerge Conflicts:\n' + config.failedBranches.map(function (branch) {
+                        return '- ' + branch;
+                    }).join('\n');
+            }
 
-		if (config.failedBranches.length) {
-			config.bodyRelease += '\n\n\nMerge Conflicts:\n' + config.failedBranches.map(function (branch) {
-				return '- '+branch;
-			}).join('\n');
-		}
+            config.github.releases.createRelease({
+                owner: config.repository.owner,
+                repo: config.repository.name,
+                tag_name: config.version,
+                target_commitish: config.releaseBranch,
+                name: 'Release ' + now.toISOString().substr(0, 10),
+                body: config.bodyRelease,
+                prerelease: true
+            }, function (err, res) {
+                if (err) {
+                    console.error('Unable to create the Github Release', err);
+                }
+                resolve();
+            });
 
-		config.github.releases.createRelease({
-			owner:            config.repository.owner,
-			repo:             config.repository.name,
-			tag_name:         config.version,
-			target_commitish: config.releaseBranch,
-			name:             'Release '+now.toISOString().substr(0, 10),
-			body:             config.bodyRelease,
-			prerelease:       true
-		}, function (err, res) {
-			if (err) {
-				console.error('Unable to create the Github Release', err);
-			}
-			resolve();
-		});
-
-	});
+        });
+    }
 }
 
 
